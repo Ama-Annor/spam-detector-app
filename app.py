@@ -28,7 +28,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Modern Professional CSS (Omitted for brevity)
+# Modern Professional CSS (Unchanged)
 st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
@@ -172,7 +172,7 @@ def init_nlp_tools():
 
 STOP_WORDS, LEMMATIZER, SIA = init_nlp_tools()
 
-# FIX 1: The 'advanced_text_preprocessing' function is renamed to 'simple_tokenizer'.
+# FIX: The 'advanced_text_preprocessing' function is renamed to 'simple_tokenizer'.
 def simple_tokenizer(text):
     text = text.lower()
     text = re.sub(r'http\S+|www\S+', 'URL', text)
@@ -183,7 +183,7 @@ def simple_tokenizer(text):
     tokens = [LEMMATIZER.lemmatize(word) for word in tokens if word not in STOP_WORDS]
     return tokens
 
-# FIX 2 & 3: The ManualSVM class is defined here and updated to handle SPARSE input.
+# FIX: The ManualSVM class is defined here and updated to handle SPARSE input.
 class ManualSVM:
     def __init__(self, learning_rate=0.001, lambda_param=0.01, n_iters=1000):
         self.lr = learning_rate
@@ -193,8 +193,11 @@ class ManualSVM:
         self.b = None
 
     def fit(self, X, y):
+        if hasattr(X, 'toarray'):
+            X = X.toarray()
+            
         n_samples, n_features = X.shape
-        y_ = np.where(y <= 0, -1, 1)
+        y_ = np.where(y == 0, -1, 1)
 
         # initialize w and b
         self.w = np.zeros(n_features)
