@@ -1,3 +1,4 @@
+// app.py
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -9,7 +10,7 @@ import re
 from textblob import TextBlob
 import joblib
 import warnings
-import os # <-- IMPORT OS MODULE FOR BETTER PATH HANDLING (Optional but good practice)
+import os # <-- Added for robust path handling
 
 warnings.filterwarnings('ignore')
 
@@ -28,7 +29,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Modern Professional CSS (Omitted for brevity, assuming this section is unchanged)
+# Modern Professional CSS (Omitted for brevity)
 st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
@@ -172,8 +173,15 @@ def init_nlp_tools():
 
 STOP_WORDS, LEMMATIZER, SIA = init_nlp_tools()
 
-# --- 🎯 THE CRITICAL FIX IS HERE ---
-# Load models
+# --- FIX ADDED HERE ---
+# This function must be present in the global scope because the models 
+# (specifically the feature vectorizer within them) were saved referencing it.
+def simple_tokenizer(text):
+    """Placeholder tokenizer to satisfy model loading requirement."""
+    return text.split()
+# ----------------------
+
+# Load models (Updated with robust path and error reporting)
 @st.cache_resource
 def load_all_models():
     """Load all available models and provide explicit error reporting."""
@@ -192,14 +200,16 @@ def load_all_models():
     # Attempt to load each model
     for name, path in model_configs.items():
         try:
-            # Use os.path.join for better cross-platform compatibility
-            full_path = os.path.join(os.path.dirname(__file__), path)
+            # Use os.path.join and os.path.dirname(__file__) for robust path resolution
+            full_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), path)
             models[name] = joblib.load(full_path)
-            # st.success(f"Loaded model: {name}") # You can uncomment this for successful load check
         except FileNotFoundError:
-            missing_models.append(f"Model file not found: {path}")
+            missing_models.append(f"Model file not found: {path}. Check file name and location (must be in the 'models' folder).")
+        except AttributeError as e:
+             # Catches the specific 'Can't get attribute' error
+            missing_models.append(f"Error loading {name} from {path}: {e}. Ensure all referenced functions (like simple_tokenizer) are defined.")
         except Exception as e:
-            missing_models.append(f"Error loading {name} from {path}: {e}")
+            missing_models.append(f"General error loading {name} from {path}: {e}")
 
     # If models are missing, display the detailed error in the app
     if missing_models:
@@ -311,8 +321,314 @@ st.markdown("""
 all_models = load_all_models()
 
 if not all_models:
-    st.error("⚠️ No model files found and all loading attempts failed. Please ensure file paths and contents are correct.")
+    st.error("⚠️ No models were successfully loaded. Review the errors above for details.")
     st.stop()
 
-# Remaining Streamlit UI/Logic (Unchanged)
-# ... (rest of the app.py file)
+# Sidebar (Unchanged)
+with st.sidebar:
+    st.markdown("### Navigation")
+    page = st.radio("", ["Detector", "Analytics", "History", "About"],
+                    label_visibility="collapsed")
+    
+    st.divider()
+    
+    # Model selector
+    st.markdown("### Model Selection")
+    available_models = list(all_models.keys())
+    selected_model_name = st.selectbox(
+        "Choose Model",
+        available_models,
+        index=available_models.index(
+            st.session_state.selected_model) if st.session_state.selected_model in available_models else 0,
+        key="model_selector"
+    )
+    
+    if selected_model_name != st.session_state.selected_model:
+        st.session_state.selected_model = selected_model_name
+        st.rerun()
+    
+    model = all_models[st.session_state.selected_model]
+    st.caption(f"Active: {st.session_state.selected_model}")
+    
+    st.divider()
+    
+    # Statistics
+    st.markdown("### Statistics")
+    col1, col2 = st.columns(2)
+    with col1:
+        st.metric("Scanned", st.session_state.total_scanned)
+    with col2:
+        st.metric("Spam", st.session_state.spam_detected)
+    
+    if st.session_state.total_scanned > 0:
+        spam_rate = (st.session_state.spam_detected / st.session_state.total_scanned) * 100
+        st.metric("Spam Rate", f"{spam_rate:.1f}%")
+    
+    st.divider()
+    if st.button("Clear Data", use_container_width=True, type="secondary"):
+        st.session_state.history = []
+        st.session_state.total_scanned = 0
+        st.session_state.spam_detected = 0
+        st.session_state.current_message = ""
+        st.rerun()
+
+# Main Content (Unchanged)
+if page == "Detector":
+    st.markdown("### Analyze Message")
+    
+    # Example buttons
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        if st.button("🎁 Spam Example", use_container_width=True, type="secondary", key="spam_ex"):
+            st.session_state.current_message = "Congratulations! You've won $1000! Click here now!"
+            st.rerun()
+    with col2:
+        if st.button("✅ Legit Example", use_container_width=True, type="secondary", key="legit_ex"):
+            st.session_state.current_message = "Hey, are you free for lunch tomorrow?"
+            st.rerun()
+    with col3:
+        if st.button("⚠️ Phishing Example", use_container_width=True, type="secondary", key="phish_ex"):
+            st.session_state.current_message = "URGENT! Your account has been suspended. Verify now: bit.ly/secure"
+            st.rerun()
+    with col4:
+        if st.button("💼 Business Example", use_container_width=True, type="secondary", key="biz_ex"):
+            st.session_state.current_message = "Meeting at 3 PM. Please bring the reports."
+            st.rerun()
+    
+    # Text area
+    message_input = st.text_area(
+        "Enter message to analyze",
+        value=st.session_state.current_message,
+        height=150,
+        placeholder="Type or paste your message here...",
+        key="message_textarea"
+    )
+    
+    st.markdown("")
+    if st.button("🚀 Analyze Message", use_container_width=True, type="primary"):
+        if message_input:
+            st.session_state.current_message = message_input
+            
+            with st.spinner("Analyzing..."):
+                progress = st.progress(0)
+                for i in range(100):
+                    time.sleep(0.005)
+                    progress.progress(i + 1)
+                
+                prediction, probability, features = predict_message(message_input, model)
+                
+                st.session_state.total_scanned += 1
+                if prediction == 'spam':
+                    st.session_state.spam_detected += 1
+                
+                st.session_state.history.insert(0, {
+                    'timestamp': datetime.now(),
+                    'message': message_input[:100] + "..." if len(message_input) > 100 else message_input,
+                    'prediction': prediction,
+                    'confidence': max(probability) * 100,
+                    'model': st.session_state.selected_model
+                })
+                st.session_state.history = st.session_state.history[:100]
+            
+            st.divider()
+            st.markdown("### Results")
+            
+            col1, col2 = st.columns([1, 1])
+            
+            with col1:
+                if prediction == 'spam':
+                    st.markdown(f"""
+                    <div class="result-card result-spam">
+                        <div class="result-title">🚫 Spam Detected</div>
+                        <div class="result-confidence">{max(probability)*100:.1f}%</div>
+                        <div class="metric-label">Confidence</div>
+                    </div>
+                    """, unsafe_allow_html=True)
+                else:
+                    st.markdown(f"""
+                    <div class="result-card result-ham">
+                        <div class="result-title">✅ Legitimate Message</div>
+                        <div class="result-confidence">{max(probability)*100:.1f}%</div>
+                        <div class="metric-label">Confidence</div>
+                    </div>
+                    """, unsafe_allow_html=True)
+            
+            with col2:
+                st.plotly_chart(
+                    create_gauge(
+                        probability[1] if prediction == 'spam' else probability[0],
+                        "danger" if prediction == 'spam' else "success"
+                    ),
+                    use_container_width=True
+                )
+            
+            st.markdown("### Probabilities")
+            col1, col2 = st.columns(2)
+            with col1:
+                st.markdown(f"""
+                <div class="metric-card">
+                    <div class="metric-value">{probability[0]*100:.2f}%</div>
+                    <div class="metric-label">Legitimate</div>
+                </div>
+                """, unsafe_allow_html=True)
+            with col2:
+                st.markdown(f"""
+                <div class="metric-card">
+                    <div class="metric-value">{probability[1]*100:.2f}%</div>
+                    <div class="metric-label">Spam</div>
+                </div>
+                """, unsafe_allow_html=True)
+            
+            st.markdown("### Message Details")
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                st.markdown(f"""
+                <div class="metric-card">
+                    <div class="metric-value">{features['message_length']}</div>
+                    <div class="metric-label">Characters</div>
+                </div>
+                """, unsafe_allow_html=True)
+            with col2:
+                st.markdown(f"""
+                <div class="metric-card">
+                    <div class="metric-value">{features['word_count']}</div>
+                    <div class="metric-label">Words</div>
+                </div>
+                """, unsafe_allow_html=True)
+            with col3:
+                st.markdown(f"""
+                <div class="metric-card">
+                    <div class="metric-value">{features['exclamation_count']}</div>
+                    <div class="metric-label">Exclamations</div>
+                </div>
+                """, unsafe_allow_html=True)
+            with col4:
+                st.markdown(f"""
+                <div class="metric-card">
+                    <div class="metric-value">{features['spam_word_count']}</div>
+                    <div class="metric-label">Spam Words</div>
+                </div>
+                """, unsafe_allow_html=True)
+        else:
+            st.warning("Please enter a message to analyze")
+
+elif page == "Analytics":
+# ... (rest of the app.py file is unchanged)
+    st.markdown("### Analytics Dashboard")
+    
+    if st.session_state.history:
+        df = pd.DataFrame(st.session_state.history)
+        
+        col1, col2, col3, col4 = st.columns(4)
+        spam_count = (df['prediction'] == 'spam').sum()
+        ham_count = (df['prediction'] == 'ham').sum()
+        
+        with col1:
+            st.metric("Total Messages", len(df))
+        with col2:
+            st.metric("Spam", spam_count)
+        with col3:
+            st.metric("Legitimate", ham_count)
+        with col4:
+            st.metric("Avg Confidence", f"{df['confidence'].mean():.1f}%")
+        
+        st.divider()
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            fig = px.pie(values=[spam_count, ham_count], names=['Spam', 'Legitimate'],
+                        title="Distribution", color_discrete_sequence=['#EF4444', '#10B981'])
+            fig.update_layout(paper_bgcolor='rgba(0,0,0,0)', font={'color': "#ECECED"}, height=350)
+            st.plotly_chart(fig, use_container_width=True)
+        
+        with col2:
+            fig = px.histogram(df, x='confidence', nbins=20, title="Confidence Distribution",
+                             color_discrete_sequence=['#3B82F6'])
+            fig.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='#1A1B1E',
+                            font={'color': "#ECECED"}, height=350)
+            st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.info("No data available. Start analyzing messages to see analytics.")
+
+elif page == "History":
+    st.markdown("### Analysis History")
+    
+    if st.session_state.history:
+        filter_type = st.selectbox("Filter", ["All", "Spam Only", "Legitimate Only"])
+        
+        history = st.session_state.history.copy()
+        if filter_type == "Spam Only":
+            history = [h for h in history if h['prediction'] == 'spam']
+        elif filter_type == "Legitimate Only":
+            history = [h for h in history if h['prediction'] == 'ham']
+        
+        st.info(f"Showing {len(history)} messages")
+        
+        for idx, entry in enumerate(history[:20]):
+            emoji = '🚫' if entry['prediction'] == 'spam' else '✅'
+            pred = entry['prediction'].upper()
+            model_used = entry.get('model', 'Unknown')
+            with st.expander(f"{emoji} {entry['timestamp'].strftime('%Y-%m-%d %H:%M')} - {pred} ({entry['confidence']:.1f}%) - {model_used}"):
+                st.text_area("Message", entry['message'], height=100, disabled=True,
+                           key=f"hist_{idx}", label_visibility="collapsed")
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.metric("Confidence", f"{entry['confidence']:.1f}%")
+                with col2:
+                    st.metric("Model", model_used)
+    else:
+        st.info("No history available. Start analyzing messages!")
+
+else:  # About
+    st.markdown("### About")
+    
+    st.markdown("""
+    <div class="metric-card">
+        <h4>Group 1 Spam Detector</h4>
+        <p>An AI-powered spam detection system featuring three machine learning algorithms:</p>
+        <ul>
+            <li><strong>Logistic Regression</strong> - Binary classification baseline</li>
+            <li><strong>Naive Bayes</strong> - Probabilistic text classifier</li>
+            <li><strong>Manual SVM</strong> - From-scratch Support Vector Machine implementation</li>
+        </ul>
+        <p>The system analyzes over 20 linguistic features to accurately classify messages.</p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    st.markdown("### Model Performance")
+    
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.markdown("""
+        <div class="metric-card">
+            <div class="metric-label">Logistic Regression</div>
+            <div class="metric-value">98.6%</div>
+            <div class="metric-label">Accuracy</div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with col2:
+        st.markdown("""
+        <div class="metric-card">
+            <div class="metric-label">Naive Bayes</div>
+            <div class="metric-value">98.2%</div>
+            <div class="metric-label">Accuracy</div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with col3:
+        st.markdown("""
+        <div class="metric-card">
+            <div class="metric-label">Manual SVM</div>
+            <div class="metric-value">96.9%</div>
+            <div class="metric-label">Accuracy</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+# Footer
+st.divider()
+st.markdown("""
+<div style="text-align: center; color: #6B6C6F; font-size: 0.875rem; padding: 1.5rem 0;">
+    Group 1 Spam Detector © 2025 | Built with Streamlit
+</div>
+""", unsafe_allow_html=True)
