@@ -25,7 +25,7 @@ from nltk.sentiment import SentimentIntensityAnalyzer
 
 # Page configuration
 st.set_page_config(
-    page_title="Group 1 Spam Detector",
+    page_title="Ama Annor's Spam Detector",
     page_icon="🛡️",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -423,7 +423,7 @@ def create_gauge(value, color_scheme):
 # Header
 st.markdown("""
 <div class="app-header">
-    <div class="app-title">🛡️ Group 1 Spam Detector</div>
+    <div class="app-title">🛡️ Ama Annor's Spam Detector</div>
     <div class="app-subtitle">AI-powered message analysis with machine learning (LR, NB, Manual SVM)</div>
 </div>
 """, unsafe_allow_html=True)
@@ -698,7 +698,7 @@ else:  # About
     
     st.markdown("""
     <div class="metric-card">
-        <h4>Group 1 Spam Detector</h4>
+        <h4>Ama Annor's Spam Detector</h4>
         <p>An AI-powered spam detection system featuring three machine learning algorithms:</p>
         <ul>
             <li><strong>Logistic Regression</strong> - Binary classification baseline</li>
@@ -743,6 +743,6 @@ else:  # About
 st.divider()
 st.markdown("""
 <div style="text-align: center; color: #6B6C6F; font-size: 0.875rem; padding: 1.5rem 0;">
-    Group 1 Spam Detector © 2025 | Built with Streamlit
+    Ama Annor's Spam Detector © 2025 | Built with Streamlit
 </div>
 """, unsafe_allow_html=True)
