@@ -172,9 +172,7 @@ def init_nlp_tools():
 
 STOP_WORDS, LEMMATIZER, SIA = init_nlp_tools()
 
-# ⚠️ FIX 1: The 'advanced_text_preprocessing' function is renamed to 'simple_tokenizer'.
-# This resolves the 'Can't get attribute 'simple_tokenizer'' error by giving the 
-# model's saved reference the actual preprocessing function.
+# FIX 1: The 'advanced_text_preprocessing' function is renamed to 'simple_tokenizer'.
 def simple_tokenizer(text):
     text = text.lower()
     text = re.sub(r'http\S+|www\S+', 'URL', text)
@@ -185,9 +183,7 @@ def simple_tokenizer(text):
     tokens = [LEMMATIZER.lemmatize(word) for word in tokens if word not in STOP_WORDS]
     return tokens
 
-# ⚠️ FIX 2: The entire custom ManualSVM class is defined here.
-# This resolves the 'Can't get attribute 'ManualSVM'' error by defining the class 
-# in the global scope where joblib.load() expects to find it.
+# FIX 2 & 3: The ManualSVM class is defined here and updated to handle SPARSE input.
 class ManualSVM:
     def __init__(self, learning_rate=0.001, lambda_param=0.01, n_iters=1000):
         self.lr = learning_rate
@@ -198,7 +194,6 @@ class ManualSVM:
 
     def fit(self, X, y):
         n_samples, n_features = X.shape
-        # Convert 0/1 to -1/1 for SVM math
         y_ = np.where(y <= 0, -1, 1)
 
         # initialize w and b
@@ -209,32 +204,26 @@ class ManualSVM:
             for idx, x_i in enumerate(X):
                 condition = y_[idx] * (np.dot(x_i, self.w) - self.b) >= 1
                 if condition:
-                    # Corrected update for the case where the prediction is correct
                     self.w -= self.lr * (2 * self.lambda_param * self.w)
                 else:
-                    # Corrected update for the case where the prediction is incorrect
                     self.w -= self.lr * (2 * self.lambda_param * self.w - np.dot(x_i, y_[idx]))
                     self.b -= self.lr * y_[idx]
 
     def predict(self, X):
+        # 🎯 FIX: Convert sparse matrix X to dense array to avoid NotImplementedError
+        if hasattr(X, 'toarray'):
+            X = X.toarray()
+            
         approx = np.dot(X, self.w) - self.b
-        # Convert -1/1 back to 0/1 for 'ham'/'spam' labels
         return np.sign(approx) 
 
-    # Added predict_proba method for compatibility with Streamlit's display logic
     def predict_proba(self, X):
-        # The decision function output from the SVM
+        # 🎯 FIX: Convert sparse matrix X to dense array to avoid NotImplementedError
+        if hasattr(X, 'toarray'):
+            X = X.toarray()
+            
         decision_function = np.dot(X, self.w) - self.b
-        # Use sigmoid to approximate probability for display, mapping scores to [0, 1]
-        # We divide by a scaling factor (e.g., 0.1) to make the curve steeper, but here we keep it simple
         sigmoid = 1 / (1 + np.exp(-decision_function)) 
-        
-        # The ManualSVM predicts 1 for spam, -1 for ham.
-        # sigmoid -> P(spam)
-        # 1 - sigmoid -> P(ham)
-        
-        # Output is [P(ham), P(spam)]
-        # Ensure output shape is (N_samples, 2)
         return np.array([1 - sigmoid, sigmoid]).T
 
 # Load models (Updated with robust path and error reporting)
@@ -261,7 +250,6 @@ def load_all_models():
         except FileNotFoundError:
             missing_models.append(f"Model file not found: {path}. Check file name and location (must be in the 'models' folder).")
         except Exception as e:
-            # This will catch the scikit-learn version error and the custom class error
             missing_models.append(f"Error loading {name} from {path}: {e}")
 
     # If models are missing, display the detailed error in the app
@@ -310,37 +298,31 @@ def predict_message(text, model):
     features = extract_features(text)
     df_pred = pd.DataFrame([features])
     
-    # Predict returns -1/1 for ManualSVM, which we need to convert to 'ham'/'spam'
     raw_prediction = model.predict(df_pred)[0]
     
     # Handle prediction conversion based on the model type
     if isinstance(model, ManualSVM):
         # ManualSVM returns 1 for spam, -1 for ham
         prediction = 'spam' if raw_prediction == 1 else 'ham'
-        
-        # The original code's predict_proba logic is handled directly in the ManualSVM class now
         probability = model.predict_proba(df_pred)[0]
     else:
-        # Scikit-learn models (LR, NB) typically return 0/1 or 'ham'/'spam' directly
-        # Assuming your LR/NB models return 'ham' or 'spam' strings or 0/1 integers
-        # For simplicity, we'll assume they return the string label they were trained with:
+        # Standard Scikit-learn models
         prediction = raw_prediction if isinstance(raw_prediction, str) else ('spam' if raw_prediction == 1 else 'ham')
         
         try:
             probability = model.predict_proba(df_pred)[0]
         except AttributeError:
-            # Fallback for scikit-learn models if predict_proba is missing
             probability = np.array([0.5, 0.5]) # Safe default
 
     # If the model prediction is a numeric label, convert to string label for session state
     if isinstance(prediction, (int, float)):
-         # Assuming 1 is spam, 0 is ham if numeric label is returned
         prediction = 'spam' if prediction == 1 else 'ham'
 
     # Ensure probability is a 2-element array [P(ham), P(spam)] for display logic
     if probability.shape == (1,):
-        # This is unlikely but handles single-value probability outputs
         probability = np.array([1 - probability[0], probability[0]])
+
+    confidence_value = max(probability) * 100 if probability is not None and len(probability) > 0 else 0.0
 
     return prediction, probability, features
 
@@ -482,12 +464,11 @@ if page == "Detector":
                 
                 prediction, probability, features = predict_message(message_input, model)
                 
+                confidence_value = max(probability) * 100 if probability is not None and len(probability) > 0 else 0.0
+
                 st.session_state.total_scanned += 1
                 if prediction == 'spam':
                     st.session_state.spam_detected += 1
-                
-                # Check if probability is available before logging confidence
-                confidence_value = max(probability) * 100 if probability is not None and len(probability) > 0 else 0.0
                 
                 st.session_state.history.insert(0, {
                     'timestamp': datetime.now(),
@@ -522,7 +503,6 @@ if page == "Detector":
                     """, unsafe_allow_html=True)
             
             with col2:
-                # Determine which probability to use for the gauge (index 1 for spam, index 0 for ham)
                 gauge_value = probability[1] if prediction == 'spam' else probability[0]
                 
                 st.plotly_chart(
