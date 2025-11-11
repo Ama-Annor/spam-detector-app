@@ -28,7 +28,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Modern Professional CSS
+# Modern Professional CSS (Omitted for brevity)
 st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
@@ -172,9 +172,9 @@ def init_nlp_tools():
 
 STOP_WORDS, LEMMATIZER, SIA = init_nlp_tools()
 
-# ⚠️ FIX: RENAMED the advanced_text_preprocessing function to simple_tokenizer.
-# This ensures that when the joblib files load, they find the function 
-# they were saved with, resolving the "Can't get attribute" error.
+# ⚠️ FIX 1: The 'advanced_text_preprocessing' function is renamed to 'simple_tokenizer'.
+# This resolves the 'Can't get attribute 'simple_tokenizer'' error by giving the 
+# model's saved reference the actual preprocessing function.
 def simple_tokenizer(text):
     text = text.lower()
     text = re.sub(r'http\S+|www\S+', 'URL', text)
@@ -185,7 +185,59 @@ def simple_tokenizer(text):
     tokens = [LEMMATIZER.lemmatize(word) for word in tokens if word not in STOP_WORDS]
     return tokens
 
-# Load models
+# ⚠️ FIX 2: The entire custom ManualSVM class is defined here.
+# This resolves the 'Can't get attribute 'ManualSVM'' error by defining the class 
+# in the global scope where joblib.load() expects to find it.
+class ManualSVM:
+    def __init__(self, learning_rate=0.001, lambda_param=0.01, n_iters=1000):
+        self.lr = learning_rate
+        self.lambda_param = lambda_param
+        self.n_iters = n_iters
+        self.w = None
+        self.b = None
+
+    def fit(self, X, y):
+        n_samples, n_features = X.shape
+        # Convert 0/1 to -1/1 for SVM math
+        y_ = np.where(y <= 0, -1, 1)
+
+        # initialize w and b
+        self.w = np.zeros(n_features)
+        self.b = 0
+
+        for _ in range(self.n_iters):
+            for idx, x_i in enumerate(X):
+                condition = y_[idx] * (np.dot(x_i, self.w) - self.b) >= 1
+                if condition:
+                    # Corrected update for the case where the prediction is correct
+                    self.w -= self.lr * (2 * self.lambda_param * self.w)
+                else:
+                    # Corrected update for the case where the prediction is incorrect
+                    self.w -= self.lr * (2 * self.lambda_param * self.w - np.dot(x_i, y_[idx]))
+                    self.b -= self.lr * y_[idx]
+
+    def predict(self, X):
+        approx = np.dot(X, self.w) - self.b
+        # Convert -1/1 back to 0/1 for 'ham'/'spam' labels
+        return np.sign(approx) 
+
+    # Added predict_proba method for compatibility with Streamlit's display logic
+    def predict_proba(self, X):
+        # The decision function output from the SVM
+        decision_function = np.dot(X, self.w) - self.b
+        # Use sigmoid to approximate probability for display, mapping scores to [0, 1]
+        # We divide by a scaling factor (e.g., 0.1) to make the curve steeper, but here we keep it simple
+        sigmoid = 1 / (1 + np.exp(-decision_function)) 
+        
+        # The ManualSVM predicts 1 for spam, -1 for ham.
+        # sigmoid -> P(spam)
+        # 1 - sigmoid -> P(ham)
+        
+        # Output is [P(ham), P(spam)]
+        # Ensure output shape is (N_samples, 2)
+        return np.array([1 - sigmoid, sigmoid]).T
+
+# Load models (Updated with robust path and error reporting)
 @st.cache_resource
 def load_all_models():
     """Load all available models and provide explicit error reporting."""
@@ -208,11 +260,9 @@ def load_all_models():
             models[name] = joblib.load(full_path)
         except FileNotFoundError:
             missing_models.append(f"Model file not found: {path}. Check file name and location (must be in the 'models' folder).")
-        except AttributeError as e:
-            # Catches the specific 'Can't get attribute' error
-            missing_models.append(f"Error loading {name} from {path}: {e}. Ensure all referenced functions are defined.")
         except Exception as e:
-            missing_models.append(f"General error loading {name} from {path}: {e}")
+            # This will catch the scikit-learn version error and the custom class error
+            missing_models.append(f"Error loading {name} from {path}: {e}")
 
     # If models are missing, display the detailed error in the app
     if missing_models:
@@ -224,7 +274,7 @@ def load_all_models():
 
 # Feature extraction
 def extract_features(text):
-    # NOTE: The processed message now calls the renamed function: simple_tokenizer(text)
+    # This calls the renamed preprocessing function (simple_tokenizer)
     processed = " ".join(simple_tokenizer(text))
     features = {
         'message': text,
@@ -259,17 +309,39 @@ def predict_message(text, model):
         return None, None, None
     features = extract_features(text)
     df_pred = pd.DataFrame([features])
-    prediction = model.predict(df_pred)[0]
-    # Handle models without predict_proba (e.g., a custom SVM)
-    try:
+    
+    # Predict returns -1/1 for ManualSVM, which we need to convert to 'ham'/'spam'
+    raw_prediction = model.predict(df_pred)[0]
+    
+    # Handle prediction conversion based on the model type
+    if isinstance(model, ManualSVM):
+        # ManualSVM returns 1 for spam, -1 for ham
+        prediction = 'spam' if raw_prediction == 1 else 'ham'
+        
+        # The original code's predict_proba logic is handled directly in the ManualSVM class now
         probability = model.predict_proba(df_pred)[0]
-    except AttributeError:
-        # Fallback: Assign a dummy probability based on prediction for display purposes
-        if prediction == 'spam':
-            probability = np.array([0.0, 1.0])
-        else:
-            probability = np.array([1.0, 0.0])
-            
+    else:
+        # Scikit-learn models (LR, NB) typically return 0/1 or 'ham'/'spam' directly
+        # Assuming your LR/NB models return 'ham' or 'spam' strings or 0/1 integers
+        # For simplicity, we'll assume they return the string label they were trained with:
+        prediction = raw_prediction if isinstance(raw_prediction, str) else ('spam' if raw_prediction == 1 else 'ham')
+        
+        try:
+            probability = model.predict_proba(df_pred)[0]
+        except AttributeError:
+            # Fallback for scikit-learn models if predict_proba is missing
+            probability = np.array([0.5, 0.5]) # Safe default
+
+    # If the model prediction is a numeric label, convert to string label for session state
+    if isinstance(prediction, (int, float)):
+         # Assuming 1 is spam, 0 is ham if numeric label is returned
+        prediction = 'spam' if prediction == 1 else 'ham'
+
+    # Ensure probability is a 2-element array [P(ham), P(spam)] for display logic
+    if probability.shape == (1,):
+        # This is unlikely but handles single-value probability outputs
+        probability = np.array([1 - probability[0], probability[0]])
+
     return prediction, probability, features
 
 # Create gauge chart
@@ -414,11 +486,14 @@ if page == "Detector":
                 if prediction == 'spam':
                     st.session_state.spam_detected += 1
                 
+                # Check if probability is available before logging confidence
+                confidence_value = max(probability) * 100 if probability is not None and len(probability) > 0 else 0.0
+                
                 st.session_state.history.insert(0, {
                     'timestamp': datetime.now(),
                     'message': message_input[:100] + "..." if len(message_input) > 100 else message_input,
                     'prediction': prediction,
-                    'confidence': max(probability) * 100,
+                    'confidence': confidence_value,
                     'model': st.session_state.selected_model
                 })
                 st.session_state.history = st.session_state.history[:100]
@@ -433,7 +508,7 @@ if page == "Detector":
                     st.markdown(f"""
                     <div class="result-card result-spam">
                         <div class="result-title">🚫 Spam Detected</div>
-                        <div class="result-confidence">{max(probability)*100:.1f}%</div>
+                        <div class="result-confidence">{confidence_value:.1f}%</div>
                         <div class="metric-label">Confidence</div>
                     </div>
                     """, unsafe_allow_html=True)
@@ -441,15 +516,18 @@ if page == "Detector":
                     st.markdown(f"""
                     <div class="result-card result-ham">
                         <div class="result-title">✅ Legitimate Message</div>
-                        <div class="result-confidence">{max(probability)*100:.1f}%</div>
+                        <div class="result-confidence">{confidence_value:.1f}%</div>
                         <div class="metric-label">Confidence</div>
                     </div>
                     """, unsafe_allow_html=True)
             
             with col2:
+                # Determine which probability to use for the gauge (index 1 for spam, index 0 for ham)
+                gauge_value = probability[1] if prediction == 'spam' else probability[0]
+                
                 st.plotly_chart(
                     create_gauge(
-                        probability[1] if prediction == 'spam' else probability[0],
+                        gauge_value,
                         "danger" if prediction == 'spam' else "success"
                     ),
                     use_container_width=True
