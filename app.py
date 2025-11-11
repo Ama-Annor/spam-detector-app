@@ -9,7 +9,7 @@ import re
 from textblob import TextBlob
 import joblib
 import warnings
-import os # <-- Added for robust path handling
+import os
 
 warnings.filterwarnings('ignore')
 
@@ -28,7 +28,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Modern Professional CSS (Omitted for brevity)
+# Modern Professional CSS
 st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
@@ -137,7 +137,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# Initialize session state (Unchanged)
+# Initialize session state
 if 'selected_model' not in st.session_state:
     st.session_state.selected_model = "Manual SVM"
 if 'history' not in st.session_state:
@@ -149,7 +149,7 @@ if 'spam_detected' not in st.session_state:
 if 'current_message' not in st.session_state:
     st.session_state.current_message = ""
 
-# Download NLTK resources (Unchanged)
+# Download NLTK resources
 @st.cache_resource
 def download_nltk_resources():
     resources = ['punkt', 'stopwords', 'wordnet', 'averaged_perceptron_tagger',
@@ -162,7 +162,7 @@ def download_nltk_resources():
 
 download_nltk_resources()
 
-# Initialize NLP tools (Unchanged)
+# Initialize NLP tools
 @st.cache_resource
 def init_nlp_tools():
     stop_words = set(stopwords.words("english"))
@@ -172,15 +172,20 @@ def init_nlp_tools():
 
 STOP_WORDS, LEMMATIZER, SIA = init_nlp_tools()
 
-# --- FIX ADDED HERE ---
-# This function must be present in the global scope because the models 
-# (specifically the feature vectorizer within them) were saved referencing it.
+# ⚠️ FIX: RENAMED the advanced_text_preprocessing function to simple_tokenizer.
+# This ensures that when the joblib files load, they find the function 
+# they were saved with, resolving the "Can't get attribute" error.
 def simple_tokenizer(text):
-    """Placeholder tokenizer to satisfy model loading requirement."""
-    return text.split()
-# ----------------------
+    text = text.lower()
+    text = re.sub(r'http\S+|www\S+', 'URL', text)
+    text = re.sub(r'\S+@\S+', 'EMAIL', text)
+    text = re.sub(r'\d+', 'NUM', text)
+    text = re.sub(r'[^a-zA-Z\s]', '', text)
+    tokens = word_tokenize(text)
+    tokens = [LEMMATIZER.lemmatize(word) for word in tokens if word not in STOP_WORDS]
+    return tokens
 
-# Load models (Updated with robust path and error reporting)
+# Load models
 @st.cache_resource
 def load_all_models():
     """Load all available models and provide explicit error reporting."""
@@ -193,20 +198,19 @@ def load_all_models():
         'Manual SVM': 'models/svm_spam_detector.pkl'
     }
 
-    # Use a dictionary to track missing models for a clear report
     missing_models = []
     
     # Attempt to load each model
     for name, path in model_configs.items():
         try:
-            # Use os.path.join and os.path.dirname(__file__) for robust path resolution
+            # Use os.path.join and os.path.abspath(__file__) for robust path resolution
             full_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), path)
             models[name] = joblib.load(full_path)
         except FileNotFoundError:
             missing_models.append(f"Model file not found: {path}. Check file name and location (must be in the 'models' folder).")
         except AttributeError as e:
-             # Catches the specific 'Can't get attribute' error
-            missing_models.append(f"Error loading {name} from {path}: {e}. Ensure all referenced functions (like simple_tokenizer) are defined.")
+            # Catches the specific 'Can't get attribute' error
+            missing_models.append(f"Error loading {name} from {path}: {e}. Ensure all referenced functions are defined.")
         except Exception as e:
             missing_models.append(f"General error loading {name} from {path}: {e}")
 
@@ -218,20 +222,10 @@ def load_all_models():
         
     return models
 
-# Text preprocessing (Unchanged)
-def advanced_text_preprocessing(text):
-    text = text.lower()
-    text = re.sub(r'http\S+|www\S+', 'URL', text)
-    text = re.sub(r'\S+@\S+', 'EMAIL', text)
-    text = re.sub(r'\d+', 'NUM', text)
-    text = re.sub(r'[^a-zA-Z\s]', '', text)
-    tokens = word_tokenize(text)
-    tokens = [LEMMATIZER.lemmatize(word) for word in tokens if word not in STOP_WORDS]
-    return tokens
-
-# Feature extraction (Unchanged)
+# Feature extraction
 def extract_features(text):
-    processed = " ".join(advanced_text_preprocessing(text))
+    # NOTE: The processed message now calls the renamed function: simple_tokenizer(text)
+    processed = " ".join(simple_tokenizer(text))
     features = {
         'message': text,
         'processed_message': processed,
@@ -259,7 +253,7 @@ def extract_features(text):
     }
     return features
 
-# Prediction (Unchanged)
+# Prediction
 def predict_message(text, model):
     if model is None:
         return None, None, None
@@ -278,7 +272,7 @@ def predict_message(text, model):
             
     return prediction, probability, features
 
-# Create gauge chart (Unchanged)
+# Create gauge chart
 def create_gauge(value, color_scheme):
     color = "#EF4444" if color_scheme == "danger" else "#10B981"
     
@@ -308,7 +302,7 @@ def create_gauge(value, color_scheme):
     )
     return fig
 
-# Header (Unchanged)
+# Header
 st.markdown("""
 <div class="app-header">
     <div class="app-title">🛡️ Group 1 Spam Detector</div>
@@ -323,7 +317,7 @@ if not all_models:
     st.error("⚠️ No models were successfully loaded. Review the errors above for details.")
     st.stop()
 
-# Sidebar (Unchanged)
+# Sidebar
 with st.sidebar:
     st.markdown("### Navigation")
     page = st.radio("", ["Detector", "Analytics", "History", "About"],
@@ -371,7 +365,7 @@ with st.sidebar:
         st.session_state.current_message = ""
         st.rerun()
 
-# Main Content (Unchanged)
+# Main Content
 if page == "Detector":
     st.markdown("### Analyze Message")
     
@@ -512,7 +506,6 @@ if page == "Detector":
             st.warning("Please enter a message to analyze")
 
 elif page == "Analytics":
-# ... (rest of the app.py file is unchanged)
     st.markdown("### Analytics Dashboard")
     
     if st.session_state.history:
