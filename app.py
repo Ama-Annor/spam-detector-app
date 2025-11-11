@@ -179,19 +179,19 @@ def load_all_models():
     
     # Try to load Logistic Regression
     try:
-        models['Logistic Regression'] = joblib.load('logistic_regression_spam_detector_model.pkl')
+        models['Logistic Regression'] = joblib.load('models/logistic_regression_spam_detector_model.pkl')
     except:
         pass
     
     # Try to load Naive Bayes
     try:
-        models['Naive Bayes'] = joblib.load('naive_bayes_spam_detector.pkl')
+        models['Naive Bayes'] = joblib.load('models/naive_bayes_spam_detector.pkl')
     except:
         pass
     
     # Try to load Manual SVM
     try:
-        models['Manual SVM'] = joblib.load('svm_spam_detector.pkl')
+        models['Manual SVM'] = joblib.load('models/svm_spam_detector.pkl')
     except:
         pass
     
