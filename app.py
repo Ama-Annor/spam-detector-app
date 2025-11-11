@@ -11,6 +11,9 @@ import joblib
 import warnings
 import os
 
+# Import necessary for custom SVM class (from notebook)
+from sklearn.base import BaseEstimator, ClassifierMixin
+
 warnings.filterwarnings('ignore')
 
 # NLTK imports
@@ -183,51 +186,113 @@ def simple_tokenizer(text):
     tokens = [LEMMATIZER.lemmatize(word) for word in tokens if word not in STOP_WORDS]
     return tokens
 
-# FIX: The ManualSVM class is defined here and updated to handle SPARSE input.
-class ManualSVM:
-    def __init__(self, learning_rate=0.001, lambda_param=0.01, n_iters=1000):
-        self.lr = learning_rate
+# ⚠️ FIX: The COMPLETE ManualSVM class from the notebook, including BaseEstimator/ClassifierMixin
+# and crucial sparse-to-dense conversion in prediction methods.
+class ManualSVM(BaseEstimator, ClassifierMixin):
+    
+    def __init__(self, learning_rate=0.001, lambda_param=0.01, n_iterations=1000, 
+                 batch_size=100, random_state=42):
+        self.learning_rate = learning_rate
         self.lambda_param = lambda_param
-        self.n_iters = n_iters
+        self.n_iterations = n_iterations
+        self.batch_size = batch_size
+        self.random_state = random_state
         self.w = None
         self.b = None
+        self.support_vectors_ = None
+        self.losses = []
+        self.classes_ = None # Must be defined for predict method
 
     def fit(self, X, y):
+        # Handle sparse matrices from TfidfVectorizer
         if hasattr(X, 'toarray'):
             X = X.toarray()
-            
+        X = np.array(X)
+        
+        # Convert labels to -1 and 1 for SVM
+        if isinstance(y.iloc[0] if hasattr(y, 'iloc') else y[0], str):
+            y_binary = np.array([1 if label == 'spam' else -1 for label in y])
+        else:
+            y_binary = np.where(np.array(y) == 1, 1, -1)
+        
+        self.classes_ = np.unique(y)
+        
         n_samples, n_features = X.shape
-        y_ = np.where(y == 0, -1, 1)
-
-        # initialize w and b
+        np.random.seed(self.random_state)
         self.w = np.zeros(n_features)
         self.b = 0
-
-        for _ in range(self.n_iters):
-            for idx, x_i in enumerate(X):
-                condition = y_[idx] * (np.dot(x_i, self.w) - self.b) >= 1
-                if condition:
-                    self.w -= self.lr * (2 * self.lambda_param * self.w)
+        
+        for iteration in range(self.n_iterations):
+            indices = np.random.choice(n_samples, min(self.batch_size, n_samples), replace=False)
+            X_batch = X[indices]
+            y_batch = y_binary[indices]
+            
+            dw = np.zeros_like(self.w)
+            db = 0
+            
+            for x_i, y_i in zip(X_batch, y_batch):
+                # Correct decision function: y * (w·x + b)
+                condition = y_i * (np.dot(x_i, self.w) + self.b)
+                
+                if condition >= 1:
+                    dw += self.lambda_param * self.w
                 else:
-                    self.w -= self.lr * (2 * self.lambda_param * self.w - np.dot(x_i, y_[idx]))
-                    self.b -= self.lr * y_[idx]
-
+                    dw += self.lambda_param * self.w - y_i * x_i
+                    db -= y_i
+            
+            dw /= len(X_batch)
+            db /= len(X_batch)
+            
+            self.w -= self.learning_rate * dw
+            self.b -= self.learning_rate * db
+        
+        return self
+        
+    def decision_function(self, X):
+        # Ensure sparse input is handled before calculation
+        if hasattr(X, 'toarray'):
+            X = X.toarray()
+        X = np.array(X)
+        return np.dot(X, self.w) + self.b 
+        
     def predict(self, X):
-        # 🎯 FIX: Convert sparse matrix X to dense array to avoid NotImplementedError
-        if hasattr(X, 'toarray'):
-            X = X.toarray()
-            
-        approx = np.dot(X, self.w) - self.b
-        return np.sign(approx) 
-
+        decision = self.decision_function(X)
+        predictions = np.where(decision >= 0, 1, -1)
+        
+        # Convert back to original labels using stored classes_
+        if self.classes_ is not None:
+             if self.classes_[-1] == 'spam':
+                 # Final output should be 'spam' or 'ham' string
+                 return np.where(predictions == 1, 'spam', 'ham')
+             else:
+                 # Handle original 0/1 labels if they were numeric
+                 return np.where(predictions == 1, 1, 0)
+        else:
+            # Fallback (should not happen if trained correctly)
+            return predictions
+        
     def predict_proba(self, X):
-        # 🎯 FIX: Convert sparse matrix X to dense array to avoid NotImplementedError
-        if hasattr(X, 'toarray'):
-            X = X.toarray()
-            
-        decision_function = np.dot(X, self.w) - self.b
-        sigmoid = 1 / (1 + np.exp(-decision_function)) 
-        return np.array([1 - sigmoid, sigmoid]).T
+        decision = self.decision_function(X)
+        
+        spam_proba = 1 / (1 + np.exp(-decision))
+        ham_proba = 1 - spam_proba
+        
+        return np.column_stack([ham_proba, spam_proba])
+        
+    def get_params(self, deep=True):
+        return {
+            'learning_rate': self.learning_rate,
+            'lambda_param': self.lambda_param,
+            'n_iterations': self.n_iterations,
+            'batch_size': self.batch_size,
+            'random_state': self.random_state
+        }
+        
+    def set_params(self, **params):
+        for key, value in params.items():
+            setattr(self, key, value)
+        return self
+
 
 # Load models (Updated with robust path and error reporting)
 @st.cache_resource
@@ -301,31 +366,27 @@ def predict_message(text, model):
     features = extract_features(text)
     df_pred = pd.DataFrame([features])
     
-    raw_prediction = model.predict(df_pred)[0]
+    # Use model's predict method, which should return 'ham' or 'spam' string
+    prediction = model.predict(df_pred)[0]
     
-    # Handle prediction conversion based on the model type
-    if isinstance(model, ManualSVM):
-        # ManualSVM returns 1 for spam, -1 for ham
-        prediction = 'spam' if raw_prediction == 1 else 'ham'
+    # Get probability
+    try:
         probability = model.predict_proba(df_pred)[0]
-    else:
-        # Standard Scikit-learn models
-        prediction = raw_prediction if isinstance(raw_prediction, str) else ('spam' if raw_prediction == 1 else 'ham')
+    except AttributeError:
+        # Fallback for models without predict_proba
+        probability = np.array([0.5, 0.5]) 
+    
+    # Ensure prediction is a string label for consistency
+    if prediction not in ['ham', 'spam']:
+        # This should not happen if the custom SVM class is correct, but safe fallback:
+        label = 1 if prediction in [1, 'spam'] else 0
+        prediction = 'spam' if label == 1 else 'ham'
+
+    # Ensure probability is a 2-element array [P(ham), P(spam)]
+    if probability.shape != (2,):
+        probability = np.array([0.5, 0.5])
         
-        try:
-            probability = model.predict_proba(df_pred)[0]
-        except AttributeError:
-            probability = np.array([0.5, 0.5]) # Safe default
-
-    # If the model prediction is a numeric label, convert to string label for session state
-    if isinstance(prediction, (int, float)):
-        prediction = 'spam' if prediction == 1 else 'ham'
-
-    # Ensure probability is a 2-element array [P(ham), P(spam)] for display logic
-    if probability.shape == (1,):
-        probability = np.array([1 - probability[0], probability[0]])
-
-    confidence_value = max(probability) * 100 if probability is not None and len(probability) > 0 else 0.0
+    confidence_value = max(probability) * 100 
 
     return prediction, probability, features
 
@@ -467,7 +528,7 @@ if page == "Detector":
                 
                 prediction, probability, features = predict_message(message_input, model)
                 
-                confidence_value = max(probability) * 100 if probability is not None and len(probability) > 0 else 0.0
+                confidence_value = max(probability) * 100 
 
                 st.session_state.total_scanned += 1
                 if prediction == 'spam':
